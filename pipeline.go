@@ -60,6 +60,8 @@ func From[T any](itemReader ItemReader[T]) *Pipeline[T] {
 	}
 }
 
+// Filter takes in an implementation of itemFilter and applies
+// the criteria to the result of the previous step
 func (p *Pipeline[T]) Filter(itemFilter ItemFilter[T]) *Pipeline[T] {
 	prev := p.pull
 	return &Pipeline[T]{
@@ -111,6 +113,13 @@ func (p *Pipeline[T]) WriteTo(ctx context.Context, itemWriter ItemWriter[T]) err
 	return itemWriter.WriteTo(ctx, res)
 }
 
+type MapperFunc[T any, R any] func(context.Context, T) (R, error)
+
+func (m MapperFunc[T, R]) Map(ctx context.Context, item T) (R, error) {
+	return m(ctx, item)
+}
+
+// MapTo lets you map an item of type T to an alternate item of type R
 func (p *Pipeline[T]) MapTo[R any](itemMapper ItemMapper[T, R]) *Pipeline[R] {
 	prev := p.pull
 	return &Pipeline[R]{
@@ -129,4 +138,9 @@ func (p *Pipeline[T]) MapTo[R any](itemMapper ItemMapper[T, R]) *Pipeline[R] {
 			return new, true, nil
 		},
 	}
+}
+
+// MapFunc is a step that lets you inline a mapping function on the pipeline itself
+func (p *Pipeline[T]) MapFunc[R any](f func(context.Context, T) (R, error)) *Pipeline[R] {
+	return p.MapTo(MapperFunc[T, R](f))
 }
