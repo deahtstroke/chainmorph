@@ -38,6 +38,11 @@ type ItemMapper[T any, R any] interface {
 	Map(context.Context, T) (R, error)
 }
 
+// AfterAction defines a no-op action to do after a step in the pipeline
+type AfterAction[T any] interface {
+	DoAfter(context.Context, T) error
+}
+
 // The Predicate type wraps a function that evaluates an item of type T
 // and returns true/false or a fatal error when something occurs
 type Predicate[T any] func(context.Context, T) (bool, error)
