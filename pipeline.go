@@ -2,7 +2,10 @@ package chainmorph
 
 import (
 	"context"
+	"errors"
 )
+
+var ErrEndOfStream = errors.New("end of stream")
 
 // Pipeline represents a series of sequentially chaining steps that are taken
 // to do ETL operations on some item(s)
@@ -20,6 +23,12 @@ type Pipeline[T any] struct {
 // and chain it downstream to the proceeding operations
 type ItemReader[T any] interface {
 	ReadFrom(context.Context) (T, error)
+}
+
+// A Tapper represents any side-effect after a step in the pipeline such as logging,
+// publishing events, etc.
+type Tapper[T any] interface {
+	Tap(context.Context, T) error
 }
 
 // An ItemWriter is a terminator operation involves writing the transformed data to
@@ -51,6 +60,8 @@ func (p Predicate[T]) Accept(ctx context.Context, item T) (bool, error) {
 	return p(ctx, item)
 }
 
+// Just takes in a slice of elements of type T and returns each element
+// Like the method name, is 'just' a stream of elements from a slice
 func Just[T any](elems ...T) *Pipeline[T] {
 	return &Pipeline[T]{
 		pull: func(ctx context.Context) (T, bool, error) {
@@ -66,12 +77,19 @@ func Just[T any](elems ...T) *Pipeline[T] {
 	}
 }
 
+// TODO: There's no real way to know if an ItemReader really finished reading
+// unless they explicitly pass the ErrEndOfStream error, this constraints
+// implementations into using this to not let pipelines run infinitely
 func From[T any](itemReader ItemReader[T]) *Pipeline[T] {
 	return &Pipeline[T]{
 		pull: func(ctx context.Context) (T, bool, error) {
+			var zero T
 			result, err := itemReader.ReadFrom(ctx)
+			if errors.Is(err, ErrEndOfStream) {
+				return zero, false, nil
+			}
+
 			if err != nil {
-				var zero T
 				return zero, false, err
 			}
 
@@ -171,4 +189,34 @@ func (p *Pipeline[T]) MapTo[R any](itemMapper ItemMapper[T, R]) *Pipeline[R] {
 // MapFunc is a step that lets you inline a mapping function on the pipeline itself
 func (p *Pipeline[T]) MapFunc[R any](f func(context.Context, T) (R, error)) *Pipeline[R] {
 	return p.MapTo(MapperFunc[T, R](f))
+}
+
+// Tap takes in an implementation of Tapper and applies the Tap function
+func (p *Pipeline[T]) Tap(tapper Tapper[T]) *Pipeline[T] {
+	prev := p.pull
+	return &Pipeline[T]{
+		pull: func(ctx context.Context) (T, bool, error) {
+			item, ok, err := prev(ctx)
+			if !ok || err != nil {
+				return item, ok, err
+			}
+
+			if err := tapper.Tap(ctx, item); err != nil {
+				var zero T
+				return zero, false, err
+			}
+
+			return item, true, nil
+		},
+	}
+}
+
+type TapFunc[T any] func(context.Context, T) error
+
+func (t TapFunc[T]) Tap(ctx context.Context, item T) error {
+	return t(ctx, item)
+}
+
+func (p *Pipeline[T]) TapFunc(f func(context.Context, T) error) *Pipeline[T]{
+	return p.Tap(TapFunc[T](f))
 }
