@@ -25,7 +25,7 @@ type ItemReader[T any] interface {
 // An ItemWriter is a terminator operation involves writing the transformed data to
 // a data sink
 type ItemWriter[T any] interface {
-	WriteTo(context.Context, T) error
+	Write(context.Context, T) error
 }
 
 // An ItemFilter will filter out the upstream item(s) based on some criterion
@@ -51,6 +51,21 @@ func (p Predicate[T]) Accept(ctx context.Context, item T) (bool, error) {
 	return p(ctx, item)
 }
 
+func Just[T any](elems ...T) *Pipeline[T] {
+	return &Pipeline[T]{
+		pull: func(ctx context.Context) (T, bool, error) {
+			var zero T
+			if len(elems) <= 0 {
+				return zero, false, nil
+			}
+
+			var elem T
+			elem, elems = elems[0], elems[1:]
+			return elem, true, nil
+		},
+	}
+}
+
 func From[T any](itemReader ItemReader[T]) *Pipeline[T] {
 	return &Pipeline[T]{
 		pull: func(ctx context.Context) (T, bool, error) {
@@ -72,17 +87,21 @@ func (p *Pipeline[T]) Filter(itemFilter ItemFilter[T]) *Pipeline[T] {
 	return &Pipeline[T]{
 		pull: func(ctx context.Context) (T, bool, error) {
 			var zero T
-			item, ok, err := prev(ctx)
-			if !ok || err != nil {
-				return zero, false, err
-			}
+			for {
+				item, ok, err := prev(ctx)
+				if !ok || err != nil {
+					return zero, false, err
+				}
 
-			ok, err = itemFilter.Accept(ctx, item)
-			if !ok || err != nil {
-				return zero, false, err
-			}
+				accepted, err := itemFilter.Accept(ctx, item)
+				if err != nil {
+					return zero, false, err
+				}
 
-			return item, true, nil
+				if accepted {
+					return item, accepted, nil
+				}
+			}
 		},
 	}
 }
@@ -106,16 +125,20 @@ func (p *Pipeline[T]) If(f func(item T) bool) *Pipeline[T] {
 // WriteTo is a terminator step that pulls a single item from upstream and writes
 // it to the passed in data sync itemWriter
 func (p *Pipeline[T]) WriteTo(ctx context.Context, itemWriter ItemWriter[T]) error {
-	res, ok, err := p.pull(ctx)
-	if err != nil {
-		return err
-	}
+	for {
+		res, ok, err := p.pull(ctx)
+		if err != nil {
+			return err
+		}
 
-	if !ok {
-		return nil
-	}
+		if !ok {
+			return nil
+		}
 
-	return itemWriter.WriteTo(ctx, res)
+		if err := itemWriter.Write(ctx, res); err != nil {
+			return err
+		}
+	}
 }
 
 type MapperFunc[T any, R any] func(context.Context, T) (R, error)
