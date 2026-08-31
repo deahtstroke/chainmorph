@@ -73,7 +73,7 @@ func Test_From_SingleJSONelement(t *testing.T) {
 		t.Fatalf("got %d items, want exactly 1", len(got))
 	}
 
-	if !reflect.DeepEqual(got, want) {
+	if !reflect.DeepEqual(got[0], want) {
 		t.Fatalf("got %v, want %v", got[0], want)
 	}
 }
