@@ -142,17 +142,22 @@ func (p *Pipeline[T]) If(f func(item T) bool) *Pipeline[T] {
 // upstream or itemWriter.Write
 func (p *Pipeline[T]) WriteTo(ctx context.Context, itemWriter ItemWriter[T]) error {
 	for {
-		res, ok, err := p.pull(ctx)
-		if err != nil {
-			return err
-		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+			res, ok, err := p.pull(ctx)
+			if err != nil {
+				return err
+			}
 
-		if !ok {
-			return nil
-		}
+			if !ok {
+				return nil
+			}
 
-		if err := itemWriter.Write(ctx, res); err != nil {
-			return err
+			if err := itemWriter.Write(ctx, res); err != nil {
+				return err
+			}
 		}
 	}
 }
